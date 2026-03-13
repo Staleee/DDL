@@ -105,14 +105,15 @@ map chatbot.getOecFile(string inputJson)
 	resp.put(searchType, searchValue);
 	resp.put("record_id", recIDStr);
 	resp.put("webhook_response", webhookResp);
-	// Direct link for the user — from our app (no auth needed to download)
+	// Direct download link: our app URL with maid_id or client_id (so user opens .../download/{maid_id} or .../download/{client_id})
+	ourBaseUrl = "https://ddl-production-47d3.up.railway.app";
 	if(webhookResp != null && webhookResp.get("download_url") != null)
 	{
 		resp.put("download_url", webhookResp.get("download_url"));
 	}
 	else
 	{
-		resp.put("download_url", "https://ddl-production-47d3.up.railway.app/download/" + recIDStr);
+		resp.put("download_url", ourBaseUrl + "/download/" + searchValue);
 	}
 
 	return resp;

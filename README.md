@@ -30,3 +30,39 @@ No Zoho tokens or env vars needed on Railway for this flow.
 ## Zoho function
 
 Use the version in **`ZOHO_FUNCTION_GET_OEC_FILE.deluge`**: it POSTs the file to `https://<your-app>.railway.app/webhook`. The response includes `download_url` (from our JSON body when possible, else fallback to `/download/<record_id>`). Give that URL to the user as the direct download link.
+
+---
+
+## Chatbot integration — direct download link (no Zoho call from chatbot)
+
+**The chatbot never talks to Zoho.** It only has the **base URL** and the **id** (maid_id or client_id). It **assembles the link** and gives it to the user.
+
+**Link format:**  
+`https://ddl-production-47d3.up.railway.app/download/{id}`  
+
+where `{id}` is the **maid_id** or **client_id**.
+
+**What happens when the user opens that link:**
+
+1. Request hits **our** server: `GET /download/12345`
+2. **We** call Zoho (with that id as maid_id, or if that fails as client_id).
+3. Zoho runs your function → finds the record → gets the file → **POSTs the file to our webhook**.
+4. We receive the file and **return it** in the same request → user gets the download.
+
+So we **imitate** a direct download: one URL, open it → file downloads. We call Zoho in the background; Zoho sends the file to our webhook; we stream it back.
+
+---
+
+### What to give the chatbot team
+
+| What | Value |
+|------|--------|
+| **Base URL** | `https://ddl-production-47d3.up.railway.app` |
+| **Link pattern** | `{BASE_URL}/download/{id}` |
+| **id** | `maid_id` **or** `client_id` (they use whichever they have) |
+
+**Example:**  
+- Chatbot has `maid_id = "12345"` → link: `https://ddl-production-47d3.up.railway.app/download/12345`  
+- Chatbot has `client_id = "67890"` → link: `https://ddl-production-47d3.up.railway.app/download/67890`  
+
+User clicks the link → file downloads. No login. Chatbot does **not** call Zoho.
