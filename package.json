@@ -1,0 +1,16 @@
+{
+  "name": "zoho-file-proxy",
+  "version": "1.0.0",
+  "description": "GET API that proxies file downloads from Zoho Creator by id",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}
