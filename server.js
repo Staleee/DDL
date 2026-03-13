@@ -72,15 +72,12 @@ app.get('/download/:id', async (req, res) => {
   const id = req.params.id;
   let entry = fileStore.get(id);
 
-  // If we don't have the file yet, trigger Zoho: they run the function and POST the file to our /webhook
+  // If we don't have the file yet, trigger Zoho via GET: they run the function and POST the file to our /webhook
   if (!entry) {
+    const sep = ZOHO_TRIGGER_URL.includes("?") ? "&" : "?";
     let zohoResp;
     try {
-      zohoResp = await fetch(ZOHO_TRIGGER_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maid_id: id }),
-      });
+      zohoResp = await fetch(`${ZOHO_TRIGGER_URL}${sep}maid_id=${encodeURIComponent(id)}`, { method: "GET" });
     } catch (e) {
       return res.status(502).json({ error: "Could not reach Zoho" });
     }
@@ -91,11 +88,7 @@ app.get('/download/:id', async (req, res) => {
     if (!success) {
       // Try as client_id
       try {
-        zohoResp = await fetch(ZOHO_TRIGGER_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ client_id: id }),
-        });
+        zohoResp = await fetch(`${ZOHO_TRIGGER_URL}${sep}client_id=${encodeURIComponent(id)}`, { method: "GET" });
       } catch (e) {
         return res.status(502).json({ error: "Could not reach Zoho" });
       }
