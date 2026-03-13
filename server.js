@@ -1,59 +1,70 @@
 const express = require('express');
-const https = require('https');
-const http = require('http');
+const multer = require('multer');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-// Zoho URL that returns the file. Must contain {{id}} which we replace with the request id.
-// Example: https://creator.zoho.com/api/xxx/report/Download?id={{id}}
-const ZOHO_FILE_URL = process.env.ZOHO_FILE_URL;
+// In-memory store: record_id -> { buffer, contentType, filename, storedAt }
+// Files expire after FILE_TTL_MS (default 1 hour)
+const fileStore = new Map();
+const FILE_TTL_MS = Number(process.env.FILE_TTL_MS) || 60 * 60 * 1000;
 
-if (!ZOHO_FILE_URL || !ZOHO_FILE_URL.includes('{{id}}')) {
-  console.warn('Set ZOHO_FILE_URL in Railway (e.g. https://creator.zoho.com/...?id={{id}})');
+function cleanupExpired() {
+  const now = Date.now();
+  for (const [id, entry] of fileStore.entries()) {
+    if (now - entry.storedAt > FILE_TTL_MS) fileStore.delete(id);
+  }
 }
+setInterval(cleanupExpired, 5 * 60 * 1000);
 
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Base URL for download links. Set BASE_URL on Railway if behind a proxy; otherwise we derive from request.
+const BASE_URL = process.env.BASE_URL || null;
+
+// ----- Your flow: Zoho POSTs the file here (auth stays on Zoho's side) -----
+// Zoho function: look up by maid_id/client_id, get file, POST to this URL with file + record_id
+app.post('/webhook', upload.single('oec_file'), (req, res) => {
+  const recordId = req.body?.record_id?.trim();
+  const file = req.file;
+
+  if (!recordId) {
+    return res.status(400).json({ error: 'Missing record_id in form' });
+  }
+  if (!file || !file.buffer) {
+    return res.status(400).json({ error: 'Missing file (field name: oec_file)' });
+  }
+
+  const filename = file.originalname || `document-${recordId}`;
+  fileStore.set(recordId, {
+    buffer: file.buffer,
+    contentType: file.mimetype || 'application/octet-stream',
+    filename,
+    storedAt: Date.now(),
+  });
+
+  const base = BASE_URL || `${req.protocol}://${req.get('host')}`.replace(/\/$/, '');
+  const downloadUrl = `${base}/download/${recordId}`;
+
+  res.status(200).json({
+    status: 'success',
+    record_id: recordId,
+    download_url: downloadUrl,
+  });
+});
+
+// ----- Direct download: serve the file that Zoho already sent us -----
 app.get('/download/:id', (req, res) => {
   const id = req.params.id;
-  if (!id) {
-    return res.status(400).json({ error: 'Missing id' });
-  }
-  if (!ZOHO_FILE_URL || !ZOHO_FILE_URL.includes('{{id}}')) {
-    return res.status(503).json({ error: 'ZOHO_FILE_URL not configured' });
-  }
+  const entry = fileStore.get(id);
 
-  const urlTemplate = ZOHO_FILE_URL;
-  const targetUrl = urlTemplate.replace('{{id}}', encodeURIComponent(id));
-  const protocol = targetUrl.startsWith('https') ? https : http;
-
-  const requestOptions = {};
-  if (process.env.ZOHO_ACCESS_TOKEN) {
-    requestOptions.headers = { Authorization: `Zoho-oauthtoken ${process.env.ZOHO_ACCESS_TOKEN}` };
+  if (!entry) {
+    return res.status(404).json({ error: 'File not found or expired' });
   }
 
-  const request = protocol.get(targetUrl, requestOptions, (zohoRes) => {
-    if (zohoRes.statusCode >= 400) {
-      res.status(zohoRes.statusCode).send('File not found or error from Zoho');
-      return;
-    }
-
-    const disposition = zohoRes.headers['content-disposition'];
-    const filename = disposition?.match(/filename\*?=(?:UTF-8'')?"?([^";\n]+)"?/i)?.[1]?.trim()
-      || disposition?.match(/filename="?([^";]+)"?/)?.[1]
-      || `document-${id}`;
-
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Type', zohoRes.headers['content-type'] || 'application/octet-stream');
-    if (zohoRes.headers['content-length']) {
-      res.setHeader('Content-Length', zohoRes.headers['content-length']);
-    }
-    zohoRes.pipe(res);
-  });
-
-  request.on('error', (err) => {
-    console.error('Zoho request error:', err.message);
-    res.status(502).json({ error: 'Download failed' });
-  });
+  res.setHeader('Content-Disposition', `attachment; filename="${entry.filename}"`);
+  res.setHeader('Content-Type', entry.contentType);
+  res.send(entry.buffer);
 });
 
 app.get('/health', (req, res) => {

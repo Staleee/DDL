@@ -1,0 +1,119 @@
+// Zoho Creator function: getOecFile
+// Uses Zoho's auth to look up by maid_id/client_id, get the file, and POST it to our app.
+// Our app stores the file and returns a direct download link (no Zoho auth needed on our side).
+
+map chatbot.getOecFile(string inputJson)
+{
+	resp = Map();
+	resp.put("status","error");
+
+	inputMap = Map();
+	try
+	{
+		inputMap = inputJson.toMap();
+	}
+	catch (e)
+	{
+		resp.put("message","Invalid JSON input");
+		return resp;
+	}
+
+	maidIDStr = if(inputMap.get("maid_id") != null, inputMap.get("maid_id").toString().trim(), "");
+	clientIDStr = if(inputMap.get("client_id") != null, inputMap.get("client_id").toString().trim(), "");
+
+	if(maidIDStr == "" && clientIDStr == "")
+	{
+		resp.put("message","Either maid_id or client_id must be provided");
+		return resp;
+	}
+
+	ownerName = "louay.sallakho_maids";
+	appLink = "visa-application-erp";
+	reportLink = "OEC_Application_Tracker";
+	fileField = "OEC_Document1";
+
+	// Railway app — POST the file to /webhook
+	webhookUrl = "https://ddl-production-47d3.up.railway.app/webhook";
+
+	criteria = "";
+	searchType = "";
+	searchValue = "";
+
+	if(maidIDStr != "")
+	{
+		criteria = "(Maid_ID==\"" + maidIDStr + "\")";
+		searchType = "maid_id";
+		searchValue = maidIDStr;
+	}
+	else
+	{
+		criteria = "(Client_ID==\"" + clientIDStr + "\")";
+		searchType = "client_id";
+		searchValue = clientIDStr;
+	}
+
+	recResp = invokeurl
+	[
+		url :"https://www.zohoapis.com/creator/v2.1/data/" + ownerName + "/" + appLink + "/report/" + reportLink + "?criteria=" + criteria
+		type :GET
+		connection:"zoho_oauth_connection"
+	];
+
+	if(recResp.get("code") != 3000 || recResp.get("data") == null || recResp.get("data").isEmpty())
+	{
+		resp.put("message","Record fetch failed");
+		resp.put(searchType, searchValue);
+		resp.put("api_response", recResp);
+		return resp;
+	}
+
+	dataRow = recResp.get("data").get(0);
+	recIDStr = if(dataRow.get("ID") != null, dataRow.get("ID").toString().trim(), "");
+
+	if(recIDStr == "")
+	{
+		resp.put("message","Record ID not found");
+		resp.put(searchType, searchValue);
+		return resp;
+	}
+
+	downloadUrl = "https://www.zohoapis.com/creator/v2.1/data/" + ownerName + "/" + appLink + "/report/" + reportLink + "/" + recIDStr + "/" + fileField + "/download";
+
+	fileObj = invokeurl
+	[
+		url :downloadUrl
+		type :GET
+		connection:"zoho_oauth_connection"
+	];
+
+	fileObj.setParamName("oec_file");
+
+	paramMap = Map();
+	paramMap.put(searchType, searchValue);
+	paramMap.put("record_id", recIDStr);
+	paramMap.put("file_field", fileField);
+
+	webhookResp = invokeurl
+	[
+		url :webhookUrl
+		type :POST
+		parameters:paramMap
+		files:fileObj
+	];
+
+	resp.put("status","success");
+	resp.put(searchType, searchValue);
+	resp.put("record_id", recIDStr);
+	resp.put("webhook_response", webhookResp);
+	// Direct link for the user — from our app (no auth needed to download)
+	if(webhookResp != null && webhookResp.get("download_url") != null)
+	{
+		resp.put("download_url", webhookResp.get("download_url"));
+	}
+	else
+	{
+		resp.put("download_url", "https://ddl-production-47d3.up.railway.app/download/" + recIDStr);
+	}
+
+	return resp;
+}

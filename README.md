@@ -1,38 +1,32 @@
-# Zoho file download proxy
+# Zoho file download proxy (Railway)
 
-GET API that takes a document `id`, calls your Zoho Creator URL, and returns the file as a download. Built for hosting on **Railway**.
+Your flow: **Zoho has the auth and the record lookup** (by `maid_id` / `client_id`). Zoho gets the file and **POSTs it to this app**. We store it and give back a **direct download link** that anyone can open — no auth on our side.
 
-## Endpoint
+## The two approaches (what we did vs the other way)
 
-- **`GET /download/:id`** — Returns the file from Zoho for the given `id`.
+| | **What we implemented (your flow)** | **The other way** |
+|---|-------------------------------------|-------------------|
+| **Who has Zoho auth?** | Zoho only (your function uses `zoho_oauth_connection`) | Our server (we’d set `ZOHO_ACCESS_TOKEN` on Railway) |
+| **Who has maid_id / client_id?** | Zoho function gets it, finds the record, gets the file | We’d need to call Zoho twice: once to get record by maid_id, once to download file by record_id |
+| **Flow** | Chatbot → Zoho function (maid_id) → Zoho fetches file → Zoho **POSTs file to us** → we store and return `download_url` | Chatbot → Zoho function (maid_id) → Zoho returns **record_id** → link is our URL with record_id → **we** call Zoho file API (with our token) and stream file |
+| **We need** | Endpoint to **receive** the file (POST) and serve it (GET) | Endpoint that **calls** Zoho (so we need their token) |
 
-Example: `https://your-app.railway.app/download/abc123` → browser downloads the document.
+You said you don’t want to set up auth here and you don’t have the record id (you have maid_id/client_id). So we use **your flow**: Zoho does the lookup and sends the file; we only receive and serve it.
 
-## Railway setup
+## Endpoints
 
-1. **Deploy**  
-   Connect this repo to Railway (or push to GitHub and deploy from there).
+- **`POST /webhook`** — Zoho function POSTs the file here (multipart, field `oec_file` + form fields `record_id`, `maid_id` or `client_id`, `file_field`). We store the file and respond with JSON: `{ "download_url": "https://.../download/<record_id>" }`.
+- **`GET /download/:id`** — Direct download. User opens this link and gets the file (no auth). `id` = `record_id` we got from the POST. Files expire after 1 hour (configurable with `FILE_TTL_MS`).
+- **`GET /health`** — For Railway health checks.
 
-2. **Environment variables** (Railway → your service → Variables):
-   - **`ZOHO_FILE_URL`** (required)  
-     Full Zoho URL that returns the file. Use `{{id}}` where the id should go, e.g.  
-     `https://creator.zoho.com/api/v2/your_org/report/Download_Report?id={{id}}`
-   - **`ZOHO_ACCESS_TOKEN`** (optional)  
-     If your Zoho API needs auth, set your OAuth token here. Sent as `Authorization: Zoho-oauthtoken <token>`.
+## Railway
 
-3. **Port**  
-   Railway sets `PORT` automatically; the app uses it.
+1. Deploy this repo to Railway.
+2. **Optional:** set **`BASE_URL`** to your public URL (e.g. `https://ddl-production-47d3.up.railway.app`) so the returned `download_url` is correct if the app is behind a proxy. Otherwise we derive it from the request.
+3. **Optional:** set **`FILE_TTL_MS`** (milliseconds; default 3600000 = 1 hour) for how long files are kept.
 
-## Local run
+No Zoho tokens or env vars needed on Railway for this flow.
 
-```bash
-npm install
-# Set ZOHO_FILE_URL (and ZOHO_ACCESS_TOKEN if needed) in .env or shell
-npm start
-```
+## Zoho function
 
-Then open: `http://localhost:3000/download/YOUR_ID`
-
-## Health check
-
-- **`GET /health`** — Returns `200 OK`. Use for Railway health checks if needed.
+Use the version in **`ZOHO_FUNCTION_GET_OEC_FILE.deluge`**: it POSTs the file to `https://<your-app>.railway.app/webhook`. The response includes `download_url` (from our JSON body when possible, else fallback to `/download/<record_id>`). Give that URL to the user as the direct download link.
