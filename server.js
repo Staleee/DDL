@@ -23,7 +23,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 const BASE_URL = process.env.BASE_URL || null;
 
 // When GET /download/:id is hit and we don't have the file, we call this Zoho API so Zoho runs the function and POSTs the file to our webhook.
-const ZOHO_TRIGGER_URL = process.env.ZOHO_TRIGGER_URL || "https://www.zohoapis.com/creator/custom/louay.sallakho_maids/chatbot_sendoec?publickey=Nvsf1WbwJB2hJzxsYKjfHP4hb";
+const ZOHO_TRIGGER_URL = process.env.ZOHO_TRIGGER_URL || "https://www.zohoapis.com/creator/custom/louay.sallakho_maids/Chatbot_Fetch_Oec?publickey=w6jnMqmxMqO0k2C66d02gJ0rz";
 
 // ----- Your flow: Zoho POSTs the file here (auth stays on Zoho's side) -----
 // Zoho function: look up by maid_id/client_id, get file, POST to this URL with file + record_id
@@ -72,8 +72,10 @@ app.get('/download/:id', async (req, res) => {
   const id = req.params.id;
   let entry = fileStore.get(id);
 
-  // If we don't have the file yet, trigger Zoho: send reqData.maid_id_str or reqData.client_id_str, they run the function and POST the file to our /webhook
   if (!entry) {
+    // Trigger Zoho so they run the function and POST the file to our /webhook
+    console.log("[download] No file in store for id=" + id + ", calling Zoho: " + ZOHO_TRIGGER_URL);
+
     let zohoResp;
     try {
       zohoResp = await fetch(ZOHO_TRIGGER_URL, {
@@ -82,13 +84,17 @@ app.get('/download/:id', async (req, res) => {
         body: JSON.stringify({ reqData: { maid_id_str: id } }),
       });
     } catch (e) {
+      console.error("[download] Zoho fetch error:", e.message);
       return res.status(502).json({ error: "Could not reach Zoho" });
     }
+
     const data = await zohoResp.json().catch(() => ({}));
     const result = data?.result || {};
     const success = data?.code === 3000 && result?.status === "success";
+    console.log("[download] Zoho response code=" + data?.code + " status=" + result?.status + " message=" + (result?.message || ""));
 
     if (!success) {
+      console.log("[download] Trying as client_id");
       try {
         zohoResp = await fetch(ZOHO_TRIGGER_URL, {
           method: "POST",
@@ -96,17 +102,18 @@ app.get('/download/:id', async (req, res) => {
           body: JSON.stringify({ reqData: { client_id_str: id } }),
         });
       } catch (e) {
+        console.error("[download] Zoho fetch error (client_id):", e.message);
         return res.status(502).json({ error: "Could not reach Zoho" });
       }
       const data2 = await zohoResp.json().catch(() => ({}));
       const result2 = data2?.result || {};
       const success2 = data2?.code === 3000 && result2?.status === "success";
+      console.log("[download] Zoho response (client_id) code=" + data2?.code + " status=" + result2?.status + " message=" + (result2?.message || ""));
       if (!success2) {
         return res.status(404).json({ error: result2?.message || "File not found" });
       }
     }
 
-    // Zoho ran the function and POSTed to our webhook; give it a moment then read from store
     await new Promise((r) => setTimeout(r, 800));
     entry = fileStore.get(id);
     if (!entry) {
@@ -121,6 +128,11 @@ app.get('/download/:id', async (req, res) => {
 
 app.get('/health', (req, res) => {
   res.status(200).send('ok');
+});
+
+// So you can confirm which Zoho API we call
+app.get('/zoho-url', (req, res) => {
+  res.json({ zoho_trigger_url: ZOHO_TRIGGER_URL });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
