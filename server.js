@@ -26,21 +26,22 @@ const BASE_URL = process.env.BASE_URL || null;
 const ZOHO_TRIGGER_URL = process.env.ZOHO_TRIGGER_URL || "https://www.zohoapis.com/creator/custom/louay.sallakho_maids/Chatbot_Fetch_Oec?publickey=w6jnMqmxMqO0k2C66d02gJ0rz";
 
 // ----- Your flow: Zoho POSTs the file here (auth stays on Zoho's side) -----
-// We derive the download id from the filename (e.g. "38001.pdf" or "38001_oec.pdf" → 38001) so Zoho doesn't need to send maid_id in the form.
-app.post('/webhook', upload.single('oec_file'), (req, res) => {
+// Zoho sends file with dynamic field name (e.g. "38001_oec_document") and paramMap with "id" = maidId.
+app.post('/webhook', upload.any(), (req, res) => {
   const recordId = req.body?.record_id?.trim();
-  const file = req.file;
-  const maidId = req.body?.maid_id?.trim();
+  const maidId = req.body?.id?.trim() || req.body?.maid_id?.trim();
   const clientId = req.body?.client_id?.trim();
+  const file = Array.isArray(req.files) && req.files.length > 0 ? req.files[0] : null;
 
   if (!file || !file.buffer) {
-    return res.status(400).json({ error: 'Missing file (field name: oec_file)' });
+    return res.status(400).json({ error: 'Missing file in form' });
   }
 
   const filename = file.originalname || 'document';
-  // Id from filename: "38001.pdf" or "38001_oec.pdf" → "38001" (before first _ or before extension)
+  // Id from form "id" / maid_id, or from filename "38001.pdf" / "38001_oec.pdf"
   const nameWithoutExt = filename.replace(/\.[^.]*$/, '').trim();
   const idFromFilename = nameWithoutExt.includes('_') ? nameWithoutExt.split('_')[0] : nameWithoutExt;
+  const linkId = maidId || clientId || idFromFilename;
 
   const entry = {
     buffer: file.buffer,
@@ -49,14 +50,14 @@ app.post('/webhook', upload.single('oec_file'), (req, res) => {
     storedAt: Date.now(),
   };
 
+  fileStore.set(linkId, entry);
   fileStore.set(idFromFilename, entry);
   if (recordId) fileStore.set(recordId, entry);
   if (maidId) fileStore.set(maidId, entry);
   if (clientId) fileStore.set(clientId, entry);
-  console.log("[webhook] Stored file under keys: idFromFilename=" + idFromFilename + (recordId ? " record_id=" + recordId : "") + (maidId ? " maid_id=" + maidId : "") + (clientId ? " client_id=" + clientId : ""));
+  console.log("[webhook] Stored file under keys: linkId=" + linkId + " idFromFilename=" + idFromFilename + (recordId ? " record_id=" + recordId : ""));
 
   const base = BASE_URL || `${req.protocol}://${req.get('host')}`.replace(/\/$/, '');
-  const linkId = idFromFilename || maidId || clientId || recordId;
   const downloadUrl = `${base}/download/${linkId}`;
 
   res.status(200).json({
@@ -81,7 +82,7 @@ app.get('/download/:id', async (req, res) => {
       zohoResp = await fetch(ZOHO_TRIGGER_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maid_id_str: id }),
+        body: JSON.stringify({ reqData: { maid_id_str: id } }),
       });
     } catch (e) {
       console.error("[download] Zoho fetch error:", e.message);
@@ -99,7 +100,7 @@ app.get('/download/:id', async (req, res) => {
         zohoResp = await fetch(ZOHO_TRIGGER_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ client_id_str: id }),
+          body: JSON.stringify({ reqData: { client_id_str: id } }),
         });
       } catch (e) {
         console.error("[download] Zoho fetch error (client_id):", e.message);
