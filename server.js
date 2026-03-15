@@ -22,8 +22,9 @@ const upload = multer({ storage: multer.memoryStorage() });
 // Base URL for download links. Set BASE_URL on Railway if behind a proxy; otherwise we derive from request.
 const BASE_URL = process.env.BASE_URL || null;
 
-// When GET /download/:id is hit and we don't have the file, we call this Zoho API so Zoho runs the function and POSTs the file to our webhook.
+// Zoho APIs: OEC document and Contract Verification (set ZOHO_TRIGGER_CONTRACT_URL in env when you have the contract API URL)
 const ZOHO_TRIGGER_URL = process.env.ZOHO_TRIGGER_URL || "https://www.zohoapis.com/creator/custom/louay.sallakho_maids/Chatbot_Fetch_Oec?publickey=w6jnMqmxMqO0k2C66d02gJ0rz";
+const ZOHO_TRIGGER_CONTRACT_URL = process.env.ZOHO_TRIGGER_CONTRACT_URL || "https://www.zohoapis.com/creator/custom/louay.sallakho_maids/Chatbot_Fetch_Verified_Contract?publickey=5WsJ6KxKwb25a5eHXYEJPEwyE";
 
 // ----- Your flow: Zoho POSTs the file here -----
 // Pass maid_id in the URL: webhook?id=38001 (form body "id" often missing when Zoho sends files).
@@ -43,16 +44,19 @@ app.post('/webhook', upload.any(), (req, res) => {
     console.log("[webhook] Missing file - query.id=" + idFromQuery + " body.record_id=" + recordId);
     return res.status(400).json({ error: 'Missing file in form' });
   }
-  // Zoho sets fieldname = maidId + "_oec_document" (e.g. "38001_oec_document") - use that so we store under 38001
-  const idFromFieldname = (file.fieldname && file.fieldname.includes("_oec_document"))
-    ? file.fieldname.replace(/_oec_document$/, "").trim()
+  // Document type from fieldname: "38001_oec_document" -> oec; "38001_contract_verification_document" -> contract
+  const isContract = file.fieldname && file.fieldname.includes("_contract_verification_document");
+  const idFromFieldname = (file.fieldname && (file.fieldname.includes("_oec_document") || file.fieldname.includes("_contract_verification_document")))
+    ? file.fieldname.replace(/_oec_document$/, "").replace(/_contract_verification_document$/, "").trim()
     : "";
-  console.log("[webhook] File fieldname=" + file.fieldname + " originalname=" + file.originalname + " query.id=" + idFromQuery + " idFromFieldname=" + idFromFieldname);
+  const prefix = isContract ? "contract_" : "";
+  console.log("[webhook] File fieldname=" + file.fieldname + " type=" + (isContract ? "contract" : "oec") + " query.id=" + idFromQuery + " idFromFieldname=" + idFromFieldname);
 
   const filename = file.originalname || 'document';
   const nameWithoutExt = filename.replace(/\.[^.]*$/, '').trim();
   const idFromFilename = nameWithoutExt.includes('_') ? nameWithoutExt.split('_')[0] : nameWithoutExt;
-  const linkId = maidId || idFromFieldname || clientId || idFromFilename;
+  const rawId = maidId || idFromFieldname || clientId || idFromFilename;
+  const linkId = prefix + rawId;
 
   const entry = {
     buffer: file.buffer,
@@ -69,7 +73,8 @@ app.post('/webhook', upload.any(), (req, res) => {
   console.log("[webhook] Stored file under keys: linkId=" + linkId + " idFromFilename=" + idFromFilename + (recordId ? " record_id=" + recordId : ""));
 
   const base = BASE_URL || `${req.protocol}://${req.get('host')}`.replace(/\/$/, '');
-  const downloadUrl = `${base}/download/${linkId}`;
+  const path = isContract ? "download/contract" : "download";
+  const downloadUrl = `${base}/${path}/${rawId}`;
 
   res.status(200).json({
     status: 'success',
@@ -137,6 +142,61 @@ app.get('/download/:id', async (req, res) => {
       console.log("[download] File not in store for id=" + id + " storeKeys=[" + storeKeys + "] (did [webhook] log appear above?)");
       return res.status(504).json({ error: "File not received from Zoho" });
     }
+  }
+
+  res.setHeader('Content-Disposition', `attachment; filename="${entry.filename}"`);
+  res.setHeader('Content-Type', entry.contentType);
+  res.send(entry.buffer);
+});
+
+// ----- Contract verification: same flow as OEC but different Zoho API and store key "contract_38001" -----
+app.get('/download/contract/:id', async (req, res) => {
+  const id = req.params.id;
+  const storeKey = "contract_" + id;
+  let entry = fileStore.get(storeKey);
+
+  if (!entry && ZOHO_TRIGGER_CONTRACT_URL) {
+    console.log("[download/contract] No file in store for id=" + id + ", calling Zoho: " + ZOHO_TRIGGER_CONTRACT_URL);
+    let zohoResp;
+    try {
+      zohoResp = await fetch(ZOHO_TRIGGER_CONTRACT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reqData: { maid_id_str: id } }),
+      });
+    } catch (e) {
+      console.error("[download/contract] Zoho fetch error:", e.message);
+      return res.status(502).json({ error: "Could not reach Zoho" });
+    }
+    const data = await zohoResp.json().catch(() => ({}));
+    const result = data?.result || {};
+    const success = data?.code === 3000 && result?.status === "success";
+    if (!success) {
+      try {
+        zohoResp = await fetch(ZOHO_TRIGGER_CONTRACT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reqData: { client_id_str: id } }),
+        });
+      } catch (e) {
+        return res.status(502).json({ error: "Could not reach Zoho" });
+      }
+      const data2 = await zohoResp.json().catch(() => ({}));
+      const result2 = data2?.result || {};
+      if (data2?.code !== 3000 || result2?.status !== "success") {
+        return res.status(404).json({ error: result2?.message || "File not found" });
+      }
+    }
+    for (let wait of [1500, 2500, 4000]) {
+      await new Promise((r) => setTimeout(r, wait));
+      entry = fileStore.get(storeKey);
+      if (entry) break;
+    }
+    if (!entry) {
+      return res.status(504).json({ error: "File not received from Zoho" });
+    }
+  } else if (!entry) {
+    return res.status(503).json({ error: "Contract download not configured (ZOHO_TRIGGER_CONTRACT_URL)" });
   }
 
   res.setHeader('Content-Disposition', `attachment; filename="${entry.filename}"`);
