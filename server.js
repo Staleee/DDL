@@ -81,7 +81,7 @@ app.get('/download/:id', async (req, res) => {
       zohoResp = await fetch(ZOHO_TRIGGER_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reqData: { maid_id_str: id } }),
+        body: JSON.stringify({ maid_id_str: id }),
       });
     } catch (e) {
       console.error("[download] Zoho fetch error:", e.message);
@@ -99,7 +99,7 @@ app.get('/download/:id', async (req, res) => {
         zohoResp = await fetch(ZOHO_TRIGGER_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reqData: { client_id_str: id } }),
+          body: JSON.stringify({ client_id_str: id }),
         });
       } catch (e) {
         console.error("[download] Zoho fetch error (client_id):", e.message);
