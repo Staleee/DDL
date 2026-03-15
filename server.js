@@ -43,13 +43,16 @@ app.post('/webhook', upload.any(), (req, res) => {
     console.log("[webhook] Missing file - query.id=" + idFromQuery + " body.record_id=" + recordId);
     return res.status(400).json({ error: 'Missing file in form' });
   }
-  console.log("[webhook] File fieldname=" + file.fieldname + " originalname=" + file.originalname + " query.id=" + idFromQuery);
+  // Zoho sets fieldname = maidId + "_oec_document" (e.g. "38001_oec_document") - use that so we store under 38001
+  const idFromFieldname = (file.fieldname && file.fieldname.includes("_oec_document"))
+    ? file.fieldname.replace(/_oec_document$/, "").trim()
+    : "";
+  console.log("[webhook] File fieldname=" + file.fieldname + " originalname=" + file.originalname + " query.id=" + idFromQuery + " idFromFieldname=" + idFromFieldname);
 
   const filename = file.originalname || 'document';
   const nameWithoutExt = filename.replace(/\.[^.]*$/, '').trim();
   const idFromFilename = nameWithoutExt.includes('_') ? nameWithoutExt.split('_')[0] : nameWithoutExt;
-  // Prefer maid_id from URL ?id= so GET /download/38001 finds the file
-  const linkId = maidId || clientId || idFromFilename;
+  const linkId = maidId || idFromFieldname || clientId || idFromFilename;
 
   const entry = {
     buffer: file.buffer,
