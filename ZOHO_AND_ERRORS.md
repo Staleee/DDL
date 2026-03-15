@@ -52,3 +52,14 @@ After redeploying the latest code:
 If those lines never appear, the running app is still an old deploy (one that doesn’t trigger Zoho). Redeploy the latest code.
 
 If those lines appear but you still get "File not found", then Zoho is being called but returning an error. Check the logged `message` from Zoho; that usually means the payload format or the way your Zoho function reads `reqData` / `maid_id_str` / `client_id_str` doesn’t match what the API sends.
+
+---
+
+## "File not received from Zoho" (504)
+
+We called Zoho and got success, but the file never showed up in our store (we wait and retry ~4 sec).
+
+**Check:**
+
+1. **Chatbot_Fetch_Oec** must POST the file to `https://ddl-production-47d3.up.railway.app/webhook` with file field **`oec_file`**. We derive the id from the **filename**: e.g. `38001.pdf` or `38001_oec.pdf` → we store under `38001`, so GET `/download/38001` finds it. You can still send `record_id` / `maid_id` / `client_id` in the form if you want; we store under those too.
+2. In Railway logs, after you call `/download/38001`, do you see **`[webhook] Stored file under keys: idFromFilename=38001 ...`**? If **no** webhook line at all, Zoho is not hitting our webhook.
