@@ -4,8 +4,8 @@
 
 - **GET /download/contract/:id** — Same flow as OEC: we call your Zoho API, Zoho POSTs the file to the **same webhook**, we store under `contract_38001` and return the file.
 - **Webhook** — Detects document type from the **file field name**:
-  - `38001_oec_document` → OEC, store under `38001` → **GET /download/38001**
-  - `38001_contract_verification_document` → Contract, store under `contract_38001` → **GET /download/contract/38001**
+  - `38001_oec_document` → OEC, store under `38001` → **GET /download/oec/38001**
+  - `38001_contract_verification_document` → Contract, store under `contract_38001` → **GET /download/verified_contract/38001**
 
 You don’t send the “file name” separately. You only need to use the right **field name** when posting the file.
 
@@ -57,11 +57,11 @@ Set that URL in Railway as the env var:
 ### 3. Download links
 
 - **OEC:**  
-  `https://ddl-production-47d3.up.railway.app/download/38001`
-- **Contract:**  
-  `https://ddl-production-47d3.up.railway.app/download/contract/38001`
+  `https://ddl-production-47d3.up.railway.app/download/oec/38001`
+- **Verified contract:**  
+  `https://ddl-production-47d3.up.railway.app/download/verified_contract/38001`
 
-Chatbot or user just uses the right path: `/download/:id` for OEC, `/download/contract/:id` for contract.
+Chatbot or user uses: `/download/oec/:id` for OEC, `/download/verified_contract/:id` for contract.
 
 ---
 

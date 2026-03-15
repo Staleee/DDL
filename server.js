@@ -73,7 +73,7 @@ app.post('/webhook', upload.any(), (req, res) => {
   console.log("[webhook] Stored file under keys: linkId=" + linkId + " idFromFilename=" + idFromFilename + (recordId ? " record_id=" + recordId : ""));
 
   const base = BASE_URL || `${req.protocol}://${req.get('host')}`.replace(/\/$/, '');
-  const path = isContract ? "download/contract" : "download";
+  const path = isContract ? "download/verified_contract" : "download/oec";
   const downloadUrl = `${base}/${path}/${rawId}`;
 
   res.status(200).json({
@@ -84,14 +84,13 @@ app.post('/webhook', upload.any(), (req, res) => {
   });
 });
 
-// ----- Direct download: user opens link → we call Zoho (Zoho POSTs file to webhook) → we return the file -----
-app.get('/download/:id', async (req, res) => {
+// ----- OEC document: GET /download/oec/:id -----
+app.get('/download/oec/:id', async (req, res) => {
   const id = req.params.id;
   let entry = fileStore.get(id);
 
   if (!entry) {
-    // Trigger Zoho so they run the function and POST the file to our /webhook
-    console.log("[download] No file in store for id=" + id + ", calling Zoho: " + ZOHO_TRIGGER_URL);
+    console.log("[download/oec] No file in store for id=" + id + ", calling Zoho: " + ZOHO_TRIGGER_URL);
 
     let zohoResp;
     try {
@@ -108,10 +107,10 @@ app.get('/download/:id', async (req, res) => {
     const data = await zohoResp.json().catch(() => ({}));
     const result = data?.result || {};
     const success = data?.code === 3000 && result?.status === "success";
-    console.log("[download] Zoho response code=" + data?.code + " status=" + result?.status + " message=" + (result?.message || ""));
+    console.log("[download/oec] Zoho response code=" + data?.code + " status=" + result?.status + " message=" + (result?.message || ""));
 
     if (!success) {
-      console.log("[download] Trying as client_id");
+      console.log("[download/oec] Trying as client_id");
       try {
         zohoResp = await fetch(ZOHO_TRIGGER_URL, {
           method: "POST",
@@ -125,7 +124,7 @@ app.get('/download/:id', async (req, res) => {
       const data2 = await zohoResp.json().catch(() => ({}));
       const result2 = data2?.result || {};
       const success2 = data2?.code === 3000 && result2?.status === "success";
-      console.log("[download] Zoho response (client_id) code=" + data2?.code + " status=" + result2?.status + " message=" + (result2?.message || ""));
+      console.log("[download/oec] Zoho response (client_id) code=" + data2?.code + " status=" + result2?.status + " message=" + (result2?.message || ""));
       if (!success2) {
         return res.status(404).json({ error: result2?.message || "File not found" });
       }
@@ -139,7 +138,7 @@ app.get('/download/:id', async (req, res) => {
     }
     if (!entry) {
       const storeKeys = Array.from(fileStore.keys()).slice(0, 20).join(",");
-      console.log("[download] File not in store for id=" + id + " storeKeys=[" + storeKeys + "] (did [webhook] log appear above?)");
+      console.log("[download/oec] File not in store for id=" + id + " storeKeys=[" + storeKeys + "] (did [webhook] log appear above?)");
       return res.status(504).json({ error: "File not received from Zoho" });
     }
   }
@@ -149,14 +148,14 @@ app.get('/download/:id', async (req, res) => {
   res.send(entry.buffer);
 });
 
-// ----- Contract verification: same flow as OEC but different Zoho API and store key "contract_38001" -----
-app.get('/download/contract/:id', async (req, res) => {
+// ----- Verified contract: GET /download/verified_contract/:id -----
+app.get('/download/verified_contract/:id', async (req, res) => {
   const id = req.params.id;
   const storeKey = "contract_" + id;
   let entry = fileStore.get(storeKey);
 
   if (!entry && ZOHO_TRIGGER_CONTRACT_URL) {
-    console.log("[download/contract] No file in store for id=" + id + ", calling Zoho: " + ZOHO_TRIGGER_CONTRACT_URL);
+    console.log("[download/verified_contract] No file in store for id=" + id + ", calling Zoho: " + ZOHO_TRIGGER_CONTRACT_URL);
     let zohoResp;
     try {
       zohoResp = await fetch(ZOHO_TRIGGER_CONTRACT_URL, {
@@ -165,7 +164,7 @@ app.get('/download/contract/:id', async (req, res) => {
         body: JSON.stringify({ reqData: { maid_id_str: id } }),
       });
     } catch (e) {
-      console.error("[download/contract] Zoho fetch error:", e.message);
+      console.error("[download/verified_contract] Zoho fetch error:", e.message);
       return res.status(502).json({ error: "Could not reach Zoho" });
     }
     const data = await zohoResp.json().catch(() => ({}));
@@ -196,7 +195,7 @@ app.get('/download/contract/:id', async (req, res) => {
       return res.status(504).json({ error: "File not received from Zoho" });
     }
   } else if (!entry) {
-    return res.status(503).json({ error: "Contract download not configured (ZOHO_TRIGGER_CONTRACT_URL)" });
+    return res.status(503).json({ error: "Verified contract download not configured (ZOHO_TRIGGER_CONTRACT_URL)" });
   }
 
   res.setHeader('Content-Disposition', `attachment; filename="${entry.filename}"`);

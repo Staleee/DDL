@@ -38,13 +38,14 @@ Use the version in **`ZOHO_FUNCTION_GET_OEC_FILE.deluge`**: it POSTs the file to
 **The chatbot never talks to Zoho.** It only has the **base URL** and the **id** (maid_id or client_id). It **assembles the link** and gives it to the user.
 
 **Link format:**  
-`https://ddl-production-47d3.up.railway.app/download/{id}`  
+- **OEC:** `https://ddl-production-47d3.up.railway.app/download/oec/{id}`  
+- **Verified contract:** `https://ddl-production-47d3.up.railway.app/download/verified_contract/{id}`  
 
-where `{id}` is the **maid_id** or **client_id**.
+where `{id}` is the **maid_id** (or **client_id**).
 
 **What happens when the user opens that link:**
 
-1. Request hits **our** server: `GET /download/12345`
+1. Request hits **our** server: e.g. `GET /download/oec/12345` or `GET /download/verified_contract/12345`
 2. **We** call Zoho (with that id as maid_id, or if that fails as client_id).
 3. Zoho runs your function → finds the record → gets the file → **POSTs the file to our webhook**.
 4. We receive the file and **return it** in the same request → user gets the download.
