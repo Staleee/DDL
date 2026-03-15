@@ -25,22 +25,30 @@ const BASE_URL = process.env.BASE_URL || null;
 // When GET /download/:id is hit and we don't have the file, we call this Zoho API so Zoho runs the function and POSTs the file to our webhook.
 const ZOHO_TRIGGER_URL = process.env.ZOHO_TRIGGER_URL || "https://www.zohoapis.com/creator/custom/louay.sallakho_maids/Chatbot_Fetch_Oec?publickey=w6jnMqmxMqO0k2C66d02gJ0rz";
 
-// ----- Your flow: Zoho POSTs the file here (auth stays on Zoho's side) -----
-// Zoho sends file with dynamic field name (e.g. "38001_oec_document") and paramMap with "id" = maidId.
+// ----- Your flow: Zoho POSTs the file here -----
+// Pass maid_id in the URL: webhook?id=38001 (form body "id" often missing when Zoho sends files).
 app.post('/webhook', upload.any(), (req, res) => {
+  const bodyKeys = req.body ? Object.keys(req.body) : [];
+  const filesCount = (req.files && Array.isArray(req.files)) ? req.files.length : (req.file ? 1 : 0);
+  console.log("[webhook] Received POST body keys=" + bodyKeys.join(",") + " filesCount=" + filesCount);
+
   const recordId = req.body?.record_id?.trim();
-  const maidId = req.body?.id?.trim() || req.body?.maid_id?.trim();
+  // Zoho often doesn't put params in body when sending files - so use ?id=38001 in the webhook URL
+  const idFromQuery = req.query?.id?.trim();
+  const maidId = idFromQuery || req.body?.id?.trim() || req.body?.maid_id?.trim();
   const clientId = req.body?.client_id?.trim();
-  const file = Array.isArray(req.files) && req.files.length > 0 ? req.files[0] : null;
+  const file = (req.files && req.files[0]) || req.file || null;
 
   if (!file || !file.buffer) {
+    console.log("[webhook] Missing file - query.id=" + idFromQuery + " body.record_id=" + recordId);
     return res.status(400).json({ error: 'Missing file in form' });
   }
+  console.log("[webhook] File fieldname=" + file.fieldname + " originalname=" + file.originalname + " query.id=" + idFromQuery);
 
   const filename = file.originalname || 'document';
-  // Id from form "id" / maid_id, or from filename "38001.pdf" / "38001_oec.pdf"
   const nameWithoutExt = filename.replace(/\.[^.]*$/, '').trim();
   const idFromFilename = nameWithoutExt.includes('_') ? nameWithoutExt.split('_')[0] : nameWithoutExt;
+  // Prefer maid_id from URL ?id= so GET /download/38001 finds the file
   const linkId = maidId || clientId || idFromFilename;
 
   const entry = {
@@ -116,13 +124,14 @@ app.get('/download/:id', async (req, res) => {
     }
 
     // Zoho POSTs to our webhook; may take a moment. Retry a few times.
-    for (let wait of [600, 1200, 2000]) {
+    for (let wait of [1500, 2500, 4000]) {
       await new Promise((r) => setTimeout(r, wait));
       entry = fileStore.get(id);
       if (entry) break;
     }
     if (!entry) {
-      console.log("[download] File still not in store for id=" + id + " after waiting (webhook may not have been called or did not send maid_id/client_id)");
+      const storeKeys = Array.from(fileStore.keys()).slice(0, 20).join(",");
+      console.log("[download] File not in store for id=" + id + " storeKeys=[" + storeKeys + "] (did [webhook] log appear above?)");
       return res.status(504).json({ error: "File not received from Zoho" });
     }
   }
